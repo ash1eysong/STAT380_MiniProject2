@@ -1,0 +1,72 @@
+---
+title: "Mini Project 2 Data"
+author: "Ian Peralta, Ashley Song, Bryan Xiao""
+format: html
+editor: visual
+---
+
+## Libraries
+
+```{r}
+#| label: libraries
+#| message: false
+library(tidyverse)
+library(ggplot2)
+```
+
+## Loading Data
+
+```{r}
+#| label: import
+#| message: false
+sanitation <- read_csv("at_least_basic_sanitation_overall_access_percent.csv")
+fertility  <- read_csv("children_per_woman_total_fertility.csv")
+co2        <- read_csv("co2_pcap_cons.csv")
+income     <- read_csv("ilevels4_wb.csv", col_types = cols(.default = "c"))
+poverty    <- read_csv("number_of_people_in_poverty.csv")
+democracy <- read_csv("democracy2020.csv")
+```
+
+## Cleaning Data
+
+```{r}
+#| label: drop-and-pivot
+drop_and_pivot <- function(df, value_name) {
+  df |>
+    select(-any_of(as.character(2023:2100))) |>
+    pivot_longer(
+      cols = -c(geo, name),
+      names_to = "year",
+      values_to = value_name
+    ) |>
+    mutate(year = as.integer(year))
+}
+
+sanitation_long <- drop_and_pivot(sanitation, "sanitation_access_pct")
+fertility_long  <- drop_and_pivot(fertility, "children_per_woman")
+co2_long        <- drop_and_pivot(co2, "co2_per_capita")
+income_long     <- drop_and_pivot(income, "income_level")
+poverty_long    <- drop_and_pivot(poverty, "people_in_poverty")
+```
+
+## Joining Data
+
+```{r}
+#| label: join
+combined <- list(
+  sanitation_long, fertility_long, co2_long,
+  income_long, poverty_long
+) |>
+  reduce(full_join, by = c("geo", "name", "year")) |>
+  filter(year == 2020) |>
+  arrange(geo, year)
+combined <- combined |>
+  inner_join(democracy, by = c("geo", "name")) |>
+  na.omit()
+```
+
+## Writing Data
+
+```{r}
+write.csv(combined, "combined data")
+```
