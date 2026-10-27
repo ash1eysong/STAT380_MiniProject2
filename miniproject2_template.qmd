@@ -1,32 +1,70 @@
 ---
 title: "Mini-project 2 Template"
-author: "Team member names here."
+author: "Ashley Song, Ian Peralta, Bryan Xiao"
 format: pdf
 editor: visual
 ---
-
-Feel free to change render format to html using
-
-format: html
-
-self-contained: true
-
-## Instructions
-
-This is the template document for mini-project 2. You must use the template document for your code, since it will make it much easier to follow.
 
 ## Libraries and data load
 
 Put whatever libraries you use here.
 
 ```{r}
-
+#| label: libraries
+#| message: false
+library(tidyverse)
+library(ggplot2)
 ```
 
 Load your data here
 
 ```{r}
+#| label: import
+#| message: false
+sanitation <- read_csv("at_least_basic_sanitation_overall_access_percent.csv")
+fertility  <- read_csv("children_per_woman_total_fertility.csv")
+co2        <- read_csv("co2_pcap_cons.csv")
+income     <- read_csv("ilevels4_wb.csv", col_types = cols(.default = "c"))
+poverty    <- read_csv("number_of_people_in_poverty.csv")
+democracy <- read_csv("democracy2020.csv")
+```
 
+Clean data
+
+```{r}
+#| label: drop-and-pivot
+drop_and_pivot <- function(df, value_name) {
+  df |>
+    select(-any_of(as.character(2023:2100))) |>
+    pivot_longer(
+      cols = -c(geo, name),
+      names_to = "year",
+      values_to = value_name
+    ) |>
+    mutate(year = as.integer(year))
+}
+
+sanitation_long <- drop_and_pivot(sanitation, "sanitation_access_pct")
+fertility_long  <- drop_and_pivot(fertility, "children_per_woman")
+co2_long        <- drop_and_pivot(co2, "co2_per_capita")
+income_long     <- drop_and_pivot(income, "income_level")
+poverty_long    <- drop_and_pivot(poverty, "people_in_poverty")
+```
+
+Join variables into one data frame
+
+```{r}
+#| label: join
+combined <- list(
+  sanitation_long, fertility_long, co2_long,
+  income_long, poverty_long
+) |>
+  reduce(full_join, by = c("geo", "name", "year")) |>
+  filter(year == 2020) |>
+  arrange(geo, year)
+combined <- combined |>
+  inner_join(democracy, by = c("geo", "name")) |>
+  na.omit()
 ```
 
 ## Exploratory data analysis
