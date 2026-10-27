@@ -65,6 +65,7 @@ combined <- list(
 combined <- combined |>
   inner_join(democracy, by = c("geo", "name")) |>
   na.omit()
+write.csv(combined, "combined data")
 ```
 
 ## Exploratory data analysis
@@ -75,31 +76,117 @@ For this section graph and find statistics for each of your predictor variables 
 
 ### Graph and description
 
+```{r}
+combined |>
+  ggplot(mapping = aes(x = Democracy, y = children_per_woman)) +
+  geom_boxplot() +
+  labs(title = "Democracy vs Children Per Woman",
+       x = "Democracy", y = "Children Per Woman") +
+  theme_minimal()
+```
+
+Non-democratic countries generally have more children per woman, with a median of about 3.06 compared to 1.59 in democratic countries. Non-democratic countries also show greater variability.
+
 ### Stats and description
 
-## Variable 2: INSERT NAME HERE
+```{r}
+combined |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(children_per_woman),
+    median      = median(children_per_woman),
+    sd          = sd(children_per_woman),
+    min         = min(children_per_woman),
+    q1          = quantile(children_per_woman, 0.25),
+    q3          = quantile(children_per_woman, 0.75),
+    max         = max(children_per_woman),
+    .by = Democracy
+  )
+```
+
+1.  Non-democratic countries have a higher mean and median children per woman than democratic countries. They also have a larger standard deviation, indicating more variation.
+
+## Variable 2: CO2 Emissions Per Capita
 
 ### Graph and description
 
 ### Stats and description
 
-## Variable 3: INSERT NAME HERE
+## Variable 3: Income Groups
 
 ### Graph and description
 
 ### Stats and description
 
-## Variable 4: INSERT NAME HERE
+## Variable 4: Basic Sanitation Access Overall
 
 ### Graph and description
 
+```{r}
+combined |>
+  ggplot(mapping = aes(x = Democracy, y = sanitation_access_pct)) +
+  geom_boxplot() +
+  labs(title = "Democracy vs Access to at Least Basic Sanitation",
+       x = "Democracy", y = "Access to at Least Basic Sanitation") +
+  theme_minimal()
+```
+
+Countries with democracy generally have higher access to basic sanitation. The median is around 98% for democratic countries compared to 70% for non-democratic countries.
+
 ### Stats and description
 
-## Variable 5: INSERT NAME HERE
+```{r}
+combined |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(sanitation_access_pct),
+    median      = median(sanitation_access_pct),
+    sd          = sd(sanitation_access_pct),
+    min         = min(sanitation_access_pct),
+    q1          = quantile(sanitation_access_pct, 0.25),
+    q3          = quantile(sanitation_access_pct, 0.75),
+    max         = max(sanitation_access_pct),
+    .by = Democracy
+  )
+```
+
+Democratic countries have a higher mean (89.89%) and median (97.80%) of access to basic sanitation than non-democratic countries (mean 64.98%, median 69.69%).
+
+## Variable 5: Number of People in Poverty
 
 ### Graph and description
 
+```{r}
+combined <- combined |>
+  mutate(log_people_in_poverty = log(people_in_poverty))
+combined |>
+  ggplot(mapping = aes(x = Democracy, y = log_people_in_poverty)) +
+  geom_boxplot() +
+  labs(title = "Democracy vs Logged People in Poverty",
+       x = "Democracy", y = "Logged People in Poverty") +
+  theme_minimal()
+```
+
+Non-democratic countries generally have higher logged poverty values, with a median around 14 compared to approximately 11 for democratic countries.
+
 ### Stats and description
+
+```{r}
+combined |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(people_in_poverty),
+    median      = median(people_in_poverty),
+    sd          = sd(people_in_poverty),
+    min         = min(people_in_poverty),
+    q1          = quantile(people_in_poverty, 0.25),
+    q3          = quantile(people_in_poverty, 0.75),
+    max         = max(people_in_poverty),
+    .by = Democracy
+  )
+```
+
+Non-democratic countries have a higher mean and median number of people in poverty than democratic countries, although the large standard deviation shows substantial variation within both groups.
 
 ## Which variable for single variable models?
 
