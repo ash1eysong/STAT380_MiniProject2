@@ -1,6 +1,6 @@
 ---
 title: "Mini Project 2 Data"
-author: "Ian Peralta, Ashley Song, Bryan Xiao""
+author: "Ian Peralta, Ashley Song, Bryan Xiao"
 format: html
 editor: visual
 ---
@@ -19,12 +19,12 @@ library(ggplot2)
 ```{r}
 #| label: import
 #| message: false
-sanitation <- read_csv("at_least_basic_sanitation_overall_access_percent.csv")
-fertility  <- read_csv("children_per_woman_total_fertility.csv")
-co2        <- read_csv("co2_pcap_cons.csv")
-income     <- read_csv("ilevels4_wb.csv", col_types = cols(.default = "c"))
-poverty    <- read_csv("number_of_people_in_poverty.csv")
-democracy <- read_csv("democracy2020.csv")
+sanitation <- read_csv("../data/predictors/at_least_basic_sanitation_overall_access_percent.csv")
+fertility  <- read_csv("../data/predictors/children_per_woman_total_fertility.csv")
+co2        <- read_csv("../data/predictors/co2_pcap_cons.csv")
+income     <- read_csv("../data/predictors/ilevels4_wb.csv", col_types = cols(.default = "c"))
+poverty    <- read_csv("../data/predictors/number_of_people_in_poverty.csv")
+democracy <- read_csv("../data/response/democracy2020.csv")
 ```
 
 ## Cleaning Data
@@ -68,5 +68,5 @@ combined <- combined |>
 ## Writing Data
 
 ```{r}
-write.csv(combined, "combined data")
+write.csv(combined, "../data/combined_data.csv")
 ```

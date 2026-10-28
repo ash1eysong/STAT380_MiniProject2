@@ -1,0 +1,463 @@
+---
+title: "Stat 380 Mini Project 2"
+author: "Ashley Song, Ian Peralta, Bryan Xiao"
+format: pdf
+editor: visual
+---
+
+> **Source disclosure**
+>
+> Reference sources for the techniques used:
+>
+> - Visualization: ggplot2 reference for `geom_jitter`, <https://ggplot2.tidyverse.org/reference/geom_jitter.html>
+> - Cleaning: R for Data Science, data tidying chapter, <https://r4ds.hadley.nz/data-tidy.html>
+> - Other: R for Data Science, exploratory data analysis chapter, <https://r4ds.hadley.nz/eda.html>
+
+## Libraries and data load
+
+Libraries for data work and plotting, and for the models that follow.
+
+```{r}
+#| label: libraries
+#| message: false
+#| warning: false
+library(tidyverse)
+library(ggplot2)
+library(parsnip)
+library(rsample)
+library(recipes)
+library(workflows)
+library(tune)
+library(dials)
+library(yardstick)
+```
+
+The response is `Democracy`, whether a country was a democracy in 2020. Every predictor is taken for 2020, the year of the democracy data.
+
+```{r}
+#| label: import
+#| message: false
+sanitation <- read_csv("../data/predictors/at_least_basic_sanitation_overall_access_percent.csv")
+fertility  <- read_csv("../data/predictors/children_per_woman_total_fertility.csv")
+co2        <- read_csv("../data/predictors/co2_pcap_cons.csv")
+income     <- read_csv("../data/predictors/ilevels4_wb.csv", col_types = cols(.default = "c"))
+poverty    <- read_csv("../data/predictors/number_of_people_in_poverty.csv")
+democracy <- read_csv("../data/response/democracy2020.csv")
+```
+
+Clean data: drop the years after 2022 and change each file to long format, one row per country and year.
+
+```{r}
+#| label: drop-and-pivot
+drop_and_pivot <- function(df, value_name) {
+  df |>
+    select(-any_of(as.character(2023:2100))) |>
+    pivot_longer(
+      cols = -c(geo, name),
+      names_to = "year",
+      values_to = value_name
+    ) |>
+    mutate(year = as.integer(year))
+}
+
+sanitation_long <- drop_and_pivot(sanitation, "sanitation_access_pct")
+fertility_long  <- drop_and_pivot(fertility, "children_per_woman")
+co2_long        <- drop_and_pivot(co2, "co2_per_capita")
+income_long     <- drop_and_pivot(income, "income_level")
+poverty_long    <- drop_and_pivot(poverty, "people_in_poverty")
+```
+
+Join variables into one data frame: keep 2020, add the response, and drop countries with any missing value.
+
+```{r}
+#| label: join
+joined <- list(
+  sanitation_long, fertility_long, co2_long,
+  income_long, poverty_long
+) |>
+  reduce(full_join, by = c("geo", "name", "year")) |>
+  filter(year == 2020) |>
+  arrange(geo, year) |>
+  inner_join(democracy, by = c("geo", "name"))
+
+combined <- na.omit(joined)
+write.csv(combined, "../data/combined_data.csv")
+```
+
+### Countries in the data
+
+```{r}
+#| label: missing-check
+joined |>
+  summarise(across(c(co2_per_capita, income_level, sanitation_access_pct,
+                     people_in_poverty), \(x) sum(is.na(x)))) |>
+  knitr::kable(caption = "Missing values among countries with a democracy label")
+
+joined |>
+  count(Democracy, name = "all_countries") |>
+  left_join(combined |> count(Democracy, name = "kept"), by = "Democracy") |>
+  knitr::kable(caption = "Countries before and after dropping rows with missing values")
+
+anti_join(joined, combined, by = "geo") |>
+  select(name, Democracy, income_level, co2_per_capita) |>
+  knitr::kable(digits = 2, caption = "Countries dropped for missing values")
+```
+
+The democracy file has 165 countries and 154 remain after dropping rows with a missing value. CO2 and income level are never the missing ones, since every dropped country lacks a sanitation or poverty value. Two high-CO2 non-democracies, Qatar and the UAE, are among the dropped countries, so all results below describe the 154 kept.
+
+## Exploratory data analysis
+
+Each predictor is graphed against the response, `Democracy`, and summarized by democracy group. Quantitative predictors get summary statistics and an outlier check, and the categorical income group gets a two way table.
+
+## Variable 1: Children Per Woman
+
+### Graph and description
+
+```{r}
+#| label: children-graph
+combined |>
+  ggplot(mapping = aes(x = Democracy, y = children_per_woman)) +
+  geom_boxplot() +
+  labs(title = "Democracy vs Children Per Woman",
+       x = "Democracy", y = "Children Per Woman") +
+  theme_minimal()
+```
+
+Non-democratic countries generally have more children per woman, with a median of about 3.06 compared to 1.59 in democratic countries. Non-democratic countries also show greater variability.
+
+### Stats and description
+
+```{r}
+#| label: children-stats
+combined |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(children_per_woman),
+    median      = median(children_per_woman),
+    sd          = sd(children_per_woman),
+    min         = min(children_per_woman),
+    q1          = quantile(children_per_woman, 0.25),
+    q3          = quantile(children_per_woman, 0.75),
+    max         = max(children_per_woman),
+    .by = Democracy
+  )
+```
+
+1.  Non-democratic countries have a higher mean and median children per woman than democratic countries. They also have a larger standard deviation, indicating more variation. Six democracies are extreme outliers, led by Ghana at 3.54 children per woman, Namibia at 3.35 and Papua New Guinea at 3.27.
+
+## Variable 2: CO2 Emissions Per Capita
+
+`co2_per_capita` is quantitative and continuous, measured in tonnes of CO2 per person on a consumption basis. In 2020 the kept countries range from 0.02 to 24.1 tonnes, with no negative or missing values.
+
+### Graph and description
+
+```{r}
+#| label: co2-graph
+#| fig-height: 3
+#| fig-width: 6
+ggplot(combined, aes(x = Democracy, y = co2_per_capita)) +
+  geom_jitter(width = 0.15, height = 0, alpha = 0.6, color = "blue", size = 2) +
+  stat_summary(fun = median, geom = "crossbar", width = 0.5,
+               color = "black", linewidth = 0.4) +
+  labs(title = "Democracy vs CO2 Emissions per Capita, 2020",
+       x = "Democracy", y = "CO2 per capita, tonnes",
+       caption = "Each dot is a country. The black bar marks the group median.") +
+  theme_minimal()
+```
+
+Democratic countries emit more CO2 per person. Most non-democratic countries sit below 3 tonnes and half are below about 1 tonne, while democratic countries spread from about 0.4 to 24 tonnes. A few non-democracies reach far above the rest of their group.
+
+### Stats and description
+
+```{r}
+#| label: co2-stats
+combined |>
+  group_by(Democracy) |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(co2_per_capita),
+    median      = median(co2_per_capita),
+    sd          = sd(co2_per_capita),
+    min         = min(co2_per_capita),
+    q1          = quantile(co2_per_capita, 0.25),
+    q3          = quantile(co2_per_capita, 0.75),
+    max         = max(co2_per_capita)
+  ) |>
+  knitr::kable(digits = 2, caption = "CO2 per capita by democracy")
+```
+
+```{r}
+#| label: co2-outliers
+combined |>
+  group_by(Democracy) |>
+  filter(co2_per_capita > quantile(co2_per_capita, 0.75) + 1.5 * IQR(co2_per_capita)) |>
+  arrange(Democracy, desc(co2_per_capita)) |>
+  ungroup() |>
+  select(Democracy, name, co2_per_capita) |>
+  knitr::kable(digits = 2, caption = "Extreme CO2 outliers within each group")
+```
+
+```{r}
+#| label: co2-overlap
+co2_medians <- combined |>
+  group_by(Democracy) |>
+  summarise(m = median(co2_per_capita)) |>
+  deframe()
+
+tibble(
+  statement = c("Democracies above the non-democratic median",
+                "Non-democracies above the democratic median"),
+  share = c(mean(combined$co2_per_capita[combined$Democracy == "Yes"] > co2_medians["No"]),
+            mean(combined$co2_per_capita[combined$Democracy == "No"] > co2_medians["Yes"]))
+) |>
+  knitr::kable(digits = 3, caption = "Overlap between the two groups")
+```
+
+Democratic countries have a mean of 6.18 and a median of 5.26 tonnes, against a mean of 2.63 and a median of 0.97 for non-democratic countries. The non-democratic mean is pulled up by a few heavy emitters, and the spread is similar in both groups, with standard deviations of 4.11 and 4.49. Among democracies 96% emit more than the non-democratic median, while only 14% of non-democracies emit more than the democratic median.
+
+Ten non-democracies and one democracy are extreme outliers. The non-democratic ones are led by Kuwait at 22.1 tonnes, Saudi Arabia at 18.2 and Bahrain at 14.7, followed by Turkmenistan, Oman, Kazakhstan, Russia, Libya, Iran and China. Most are oil and gas exporters, and China and Russia are very large industrial economies. The one democratic outlier is Singapore at 24.1, a small wealthy trade hub. The lowest emitters are the DR Congo, Burundi and the Central African Republic, all non-democracies, and the lowest democracy is Timor-Leste at 0.42.
+
+CO2 per capita is a useful predictor, since the middle halves of the two groups barely overlap, running from 0.37 to 2.65 tonnes for non-democracies and from 2.44 to 8.66 for democracies. Its main weakness is the group of oil and gas states, which are non-democratic but emit as much as rich democracies.
+
+## Variable 3: Income Groups
+
+`income_level` is categorical and ordinal with four levels: Low, Lower middle, Upper middle and High income, assigned by the World Bank from GNI per capita. It has no missing values among the kept countries, and it is ordered below so that plots and tables run from low to high.
+
+```{r}
+#| label: income-order
+income_data <- combined |>
+  mutate(income_level = factor(
+    income_level,
+    levels = c("Low income", "Lower middle income",
+               "Upper middle income", "High income"),
+    ordered = TRUE
+  ))
+```
+
+### Graph and description
+
+```{r}
+#| label: income-graph
+#| fig-height: 3
+#| fig-width: 6
+ggplot(income_data, aes(x = income_level, fill = Democracy)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c(No = "orange", Yes = "blue")) +
+  scale_x_discrete(labels = scales::label_wrap(12)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Democracy by World Bank Income Group, 2020",
+       x = "Income group", y = "Share of countries", fill = "Democracy") +
+  theme_minimal()
+```
+
+The share of democracies rises steadily with income. No low income country is a democracy, about a quarter of lower middle income countries are, about half of upper middle income countries are, and nearly all high income countries are.
+
+### Two way table and description
+
+```{r}
+#| label: income-tables
+income_table <- table(income_data$income_level, income_data$Democracy)
+
+knitr::kable(addmargins(income_table),
+             caption = "Number of countries by income group and democracy")
+
+knitr::kable(round(prop.table(income_table, margin = 1), 3),
+             caption = "Share of each income group that is democratic or not")
+
+knitr::kable(round(prop.table(income_table, margin = 2), 3),
+             caption = "Share of each democracy group in each income level")
+```
+
+Of the 154 countries, 45% are democracies. The share is 0% of 24 low income countries, 23% of 48 lower middle income countries, 54% of 41 upper middle income countries and 90% of 41 high income countries. Looking the other way, 53% of the 70 democracies are high income and none are low income, while 44% of the 84 non-democracies are lower middle income, 29% are low income and only 5% are high income.
+
+The four high income non-democracies are Bahrain, Kuwait, Oman and Saudi Arabia, all Gulf oil exporters. Qatar and the UAE, dropped above for a missing poverty value, fit the same pattern.
+
+```{r}
+#| label: income-co2
+income_data |>
+  group_by(income_level) |>
+  summarise(n_countries = n(), median_co2 = median(co2_per_capita),
+            mean_co2 = mean(co2_per_capita)) |>
+  knitr::kable(digits = 2, caption = "CO2 per capita by income group")
+```
+
+CO2 per capita rises with income, from a median of 0.19 tonnes for low income countries to 8.67 for high income countries. The two predictors therefore capture overlapping information.
+
+## Variable 4: Basic Sanitation Access Overall
+
+### Graph and description
+
+```{r}
+#| label: sanitation-graph
+combined |>
+  ggplot(mapping = aes(x = Democracy, y = sanitation_access_pct)) +
+  geom_boxplot() +
+  labs(title = "Democracy vs Access to at Least Basic Sanitation",
+       x = "Democracy", y = "Access to at Least Basic Sanitation") +
+  theme_minimal()
+```
+
+Countries with democracy generally have higher access to basic sanitation. The median is around 98% for democratic countries compared to 70% for non-democratic countries.
+
+### Stats and description
+
+```{r}
+#| label: sanitation-stats
+combined |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(sanitation_access_pct),
+    median      = median(sanitation_access_pct),
+    sd          = sd(sanitation_access_pct),
+    min         = min(sanitation_access_pct),
+    q1          = quantile(sanitation_access_pct, 0.25),
+    q3          = quantile(sanitation_access_pct, 0.75),
+    max         = max(sanitation_access_pct),
+    .by = Democracy
+  )
+```
+
+Democratic countries have a higher mean (89.89%) and median (97.80%) of access to basic sanitation than non-democratic countries (mean 64.98%, median 69.69%). Eight democracies are extreme low outliers, the lowest being Papua New Guinea at 22.2%, Ghana at 26.6% and Namibia at 37.3%.
+
+## Variable 5: Number of People in Poverty
+
+### Graph and description
+
+```{r}
+#| label: poverty-graph
+combined <- combined |>
+  mutate(log_people_in_poverty = log(people_in_poverty))
+combined |>
+  ggplot(mapping = aes(x = Democracy, y = log_people_in_poverty)) +
+  geom_boxplot() +
+  labs(title = "Democracy vs Logged People in Poverty",
+       x = "Democracy", y = "Logged People in Poverty") +
+  theme_minimal()
+```
+
+Non-democratic countries generally have higher logged poverty values, with a median around 14 compared to approximately 11 for democratic countries.
+
+### Stats and description
+
+```{r}
+#| label: poverty-stats
+combined |>
+  summarise(
+    n_countries = n(),
+    mean        = mean(people_in_poverty),
+    median      = median(people_in_poverty),
+    sd          = sd(people_in_poverty),
+    min         = min(people_in_poverty),
+    q1          = quantile(people_in_poverty, 0.25),
+    q3          = quantile(people_in_poverty, 0.75),
+    max         = max(people_in_poverty),
+    .by = Democracy
+  )
+```
+
+Non-democratic countries have a higher mean and median number of people in poverty than democratic countries, although the large standard deviation shows substantial variation within both groups. On the raw scale 24 countries are high outliers, 10 non-democracies led by the DR Congo at 81.2 million and Nigeria at 80.2 million, and 14 democracies led by India at 143.3 million and Indonesia at 28.7 million.
+
+## Which variable for single variable models?
+
+Each predictor is scored with two rough measures. Accuracy is the share of countries classified correctly by the best single cutoff on that predictor. AUC is the chance that a randomly chosen democracy scores higher than a randomly chosen non-democracy on the predictor, taken in whichever direction is stronger. A value of 0.5 means no separation and 1 means perfect separation.
+
+```{r}
+#| label: predictor-comparison
+is_democracy <- combined$Democracy == "Yes"
+
+rank_auc <- function(x, y) {
+  r <- rank(x)
+  n_yes <- sum(y)
+  n_no <- sum(!y)
+  auc <- (sum(r[y]) - n_yes * (n_yes + 1) / 2) / (n_yes * n_no)
+  max(auc, 1 - auc)
+}
+
+best_cutoff_accuracy <- function(x, y) {
+  cutoffs <- sort(unique(x))
+  max(map_dbl(cutoffs, \(t) max(mean((x > t) == y), mean((x <= t) == y))))
+}
+
+income_rank <- match(
+  combined$income_level,
+  c("Low income", "Lower middle income", "Upper middle income", "High income")
+)
+
+predictors <- list(
+  "Children per woman"       = combined$children_per_woman,
+  "CO2 emissions per capita" = combined$co2_per_capita,
+  "Income group"             = income_rank,
+  "Basic sanitation access"  = combined$sanitation_access_pct,
+  "People in poverty"        = combined$people_in_poverty
+)
+
+tibble(
+  predictor = names(predictors),
+  accuracy  = map_dbl(predictors, best_cutoff_accuracy, y = is_democracy),
+  auc       = map_dbl(predictors, rank_auc, y = is_democracy)
+) |>
+  arrange(desc(auc)) |>
+  knitr::kable(digits = 3, caption = "Single predictor strength for separating democracies")
+```
+
+```{r}
+#| label: predictor-correlations
+combined |>
+  select(children_per_woman, co2_per_capita, sanitation_access_pct, people_in_poverty) |>
+  cor() |>
+  knitr::kable(digits = 2, caption = "Correlations between the quantitative predictors")
+```
+
+Income group and children per woman are nearly tied as the strongest predictors, with AUCs of about 0.86 each, and CO2 comes next at 0.81. Sanitation and poverty are the weakest. We suggest children per woman for the single variable models, because it has the best accuracy at 79% and is quantitative with many distinct values, which suits both kNN distances and a logistic curve. Income group has only four distinct values, which makes it awkward for kNN. Children per woman and sanitation are strongly related, with a correlation of -0.85, so the all variable models will carry some duplicated information. These are rough checks on the same data used to build them, and cross validation in the models will test them properly.
+
+## kNN classification
+
+### Single variable model
+
+Make a kNN model using your best predictor variable \#### Model tuning to find k
+
+#### Model for best k
+
+#### Model evaluation-accuracy, cv for overfitting
+
+### All variable model
+
+Make a kNN model using all your predictor variables \#### Model tuning to find k using cv.
+
+#### Model for best k
+
+#### Model evaluation-accuracy, cv for overfitting
+
+### Which model was best?
+
+Of your two kNN models which performed the best? Why? If it was the multivariate model was it worth the trade off of complexity? Why?
+
+## Logistic Regression
+
+### Single variable model
+
+Make a logistic regression model using your best predictor variable \#### Model
+
+#### Equation and Graph of model
+
+#### Model evaluation-p-values, accuracy, cv for overfitting, roc, auc
+
+### All variable model
+
+Make a logistic regression model using all your predictor variables \#### Model
+
+#### Equation of model
+
+#### Model evaluation-p-values, accuracy, cv for overfitting, roc, auc
+
+### Which model was best?
+
+Of your two logistic regression models which performed the best? Why? If it was the multivariate model was it worth the trade off of complexity? Why?
+
+## Best model
+
+Which model would you reccomend the lab use? Why? Are there tradeoff between interpretability and model metrics?
+
+## Your question
+
+You will write your own question about the data, create a data visualization that can help answer your question, and write an answer to your question. The question/visualization should explore the relationship between at least 2 of the variables in the dataset. Be sure you include both the question and the answer to your question based on the visualization you have created. It should be a different question than last mini-project.
