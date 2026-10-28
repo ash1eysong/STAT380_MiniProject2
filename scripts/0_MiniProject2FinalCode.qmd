@@ -414,23 +414,159 @@ Income group and children per woman are nearly tied as the strongest predictors,
 
 ### Single variable model
 
-Make a kNN model using your best predictor variable \#### Model tuning to find k
+Make a kNN model using your best predictor variable
+
+```{r}
+#| label: recipe_creation
+knn_single_variable_recipe <- recipe(Democracy~income_level, data = combined) |>
+  step_dummy(all_nominal_predictors())
+
+knn_all_variable_recipe <- recipe(Democracy~income_level+sanitation_access_pct+children_per_woman+co2_per_capita+people_in_poverty, data = combined) |>
+  step_normalize(all_numeric_predictors())|>
+  step_dummy(all_nominal_predictors())
+```
+
+#### Model tuning to find k
+
+```{r}
+#| label: model-tuning-k-single-variable
+set.seed(1776)
+val_split <- validation_split(combined, prop = 0.8)
+
+knn_spec <- nearest_neighbor(neighbors=tune(),  weight_func = "rectangular") |>
+  set_engine("kknn")|>
+  set_mode("classification")
+
+knn_wf_single<-workflow()|>
+  add_recipe(knn_single_variable_recipe)|>
+  add_model(knn_spec)
+
+knn_grid <- tibble(neighbors = seq(from=3, to=21, by=2)) 
+class_met=metric_set(accuracy)
+knn_cv <- tune_grid(
+  knn_wf_single,
+  resamples = val_split,
+  grid = knn_grid
+)
+cv_metrics_knn<-collect_metrics(knn_cv)
+cv_metrics_knn
+
+autoplot(knn_cv, metric = "accuracy")
+best_k <- select_best(knn_cv, metric = "accuracy")
+best_k
+```
 
 #### Model for best k
 
+```{r}
+#| label: best-single-variable-model
+knn_spec<-nearest_neighbor(neighbors=3,  weight_func = "rectangular") |>
+  set_engine("kknn")|>
+  set_mode("classification")
+
+knn_wf_single<-workflow()|>
+  add_recipe(knn_single_variable_recipe)|>
+  add_model(knn_spec)
+
+single_knn_model <- 
+  knn_wf_single |> 
+  fit(data = combined)
+```
+
 #### Model evaluation-accuracy, cv for overfitting
+
+```{r}
+#| label: single-variable-model-evaluation
+set.seed(1776)
+folds <- vfold_cv(combined, v = 10)
+
+knn_cv_single <- tune_grid(
+  knn_wf_single,
+  resamples = folds,
+  grid = knn_grid,
+  metrics = class_met
+)
+
+best_k_single <- select_best(knn_cv_single, metric = "accuracy")
+collect_metrics(knn_cv_single)
+```
+
+There is not clear evidence of overfitting when comparing against the accuracy of the cross-validation model. The accuracy scores on both models are roughly the same, which leans towards the model not overfitting.
 
 ### All variable model
 
-Make a kNN model using all your predictor variables \#### Model tuning to find k using cv.
+Make a kNN model using all your predictor variables
+
+#### Model tuning to find k using cv.
+
+```{r}
+#| label: model-tuning-k-all-variables
+set.seed(1776)
+val_split <- validation_split(combined, prop = 0.8)
+
+knn_spec <- nearest_neighbor(neighbors=tune(),  weight_func = "rectangular") |>
+  set_engine("kknn")|>
+  set_mode("classification")
+
+knn_wf_all<-workflow()|>
+  add_recipe(knn_all_variable_recipe)|>
+  add_model(knn_spec)
+
+knn_grid <- tibble(neighbors = seq(from=3, to=21, by=2)) 
+class_met=metric_set(accuracy)
+knn_cv <- tune_grid(
+  knn_wf_all,
+  resamples = val_split,
+  grid = knn_grid
+)
+cv_metrics_knn<-collect_metrics(knn_cv)
+cv_metrics_knn
+
+autoplot(knn_cv, metric = "accuracy")
+best_k <- select_best(knn_cv, metric = "accuracy")
+best_k
+```
 
 #### Model for best k
 
+```{r}
+#| label: best-all-variables-model
+knn_spec<-nearest_neighbor(neighbors=5,  weight_func = "rectangular") |>
+  set_engine("kknn")|>
+  set_mode("classification")
+
+knn_wf_all<-workflow()|>
+  add_recipe(knn_all_variable_recipe)|>
+  add_model(knn_spec)
+
+all_knn_model <- 
+  knn_wf_all |> 
+  fit(data = combined)
+```
+
 #### Model evaluation-accuracy, cv for overfitting
+
+```{r}
+#| label: all-variables-model-evaluation
+set.seed(1776)
+folds <- vfold_cv(combined, v = 10)
+
+knn_cv_all <- tune_grid(
+  knn_wf_all,
+  resamples = folds,
+  grid = knn_grid,
+  metrics = class_met
+)
+
+best_k_all <- select_best(knn_cv_all, metric = "accuracy")
+collect_metrics(knn_cv_all)
+```
+
+There is no noticeable gap between the cross-validation model mean accuracy and the accuracy in the best model. The difference between the mean accuracy and accuracy of the best model seems to be roughly the same as the single variable model. I would say there is no overfitting present in this model.
 
 ### Which model was best?
 
-Of your two kNN models which performed the best? Why? If it was the multivariate model was it worth the trade off of complexity? Why?
+Of the two kNN models, the best performing one was the multivariate model. It had the higher accuracy when finding the best k as well as during cross-validation. I would say the trade off of complexity was not worth it as we only gained a small increase to accuracy at the cost of adding four addition variables. This will make the model harder to interpret.
 
 ## Logistic Regression
 
