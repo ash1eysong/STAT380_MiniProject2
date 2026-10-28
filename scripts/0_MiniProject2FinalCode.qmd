@@ -460,4 +460,33 @@ Which model would you reccomend the lab use? Why? Are there tradeoff between int
 
 ## Your question
 
-You will write your own question about the data, create a data visualization that can help answer your question, and write an answer to your question. The question/visualization should explore the relationship between at least 2 of the variables in the dataset. Be sure you include both the question and the answer to your question based on the visualization you have created. It should be a different question than last mini-project.
+Is access to basic sanitation associated with the average number of children per woman across countries?
+
+### Discussion
+
+Access to basic sanitation is an important indicator of living conditions and public health. We wanted to investigate whether countries with greater access to basic sanitation tend to have lower fertility rates. Comparing these two variables may help us understand how different aspects of development are associated across countries.
+
+```{r}
+combined |>
+  ggplot(aes(x = sanitation_access_pct, y = children_per_woman)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Sanitation Access vs. Children per Woman",
+    x = "Access to Basic Sanitation (%)",
+    y = "Children per Woman",
+    caption = "Each point represents a country in 2020."
+  ) +
+  theme_minimal()
+```
+
+```{r}
+combined |>
+  summarise(
+    correlation = cor(sanitation_access_pct, children_per_woman)
+  )
+```
+
+### Answer
+
+The visualization shows a strong negative relationship between access to basic sanitation and the number of children per woman. Countries with higher access to basic sanitation generally have fewer children per woman, while countries with lower sanitation access tend to have higher fertility rates. The correlation coefficient of -0.846 supports this observation, indicating a strong negative association between the two variables. However, this relationship does not establish causation, and other factors, such as income, education, and healthcare access, may also contribute to the observed pattern.
