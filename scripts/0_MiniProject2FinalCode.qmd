@@ -752,12 +752,10 @@ Holding the other predictors fixed, each step up in income group multiplies the 
 
 #### Equation of model
 
-$$
-\begin{aligned}
+$$\begin{aligned}
 \log\left(\frac{p}{1-p}\right) &= 0.07 + 2.46 \times \text{income score} - 0.052 \times \text{sanitation} \\
 &\quad - 1.87 \times \text{children per woman} - 0.111 \times \text{CO2} + 0.162 \times \log(\text{poverty})
-\end{aligned}
-$$
+\end{aligned}$$
 
 #### Model evaluation-p-values, accuracy, cv for overfitting, roc, auc
 
@@ -812,7 +810,9 @@ The all variable model ranks countries better, with a cross validated AUC of 0.8
 
 ## Best model
 
-Which model would you reccomend the lab use? Why? Are there tradeoff between interpretability and model metrics?
+I recommend that the lab use the all-variable logistic regression model because it had the strongest overall predictive performance. Its cross-validation accuracy was 78.7%, compared with 77.2% for the single-variable logistic regression model. Its AUC was also higher at 0.899 compared with 0.857, indicating that it was better at distinguishing democratic from non-democratic countries. The all-variable kNN model also outperformed the single-variable kNN model, with cross-validation accuracy increasing from 77.3% to 79.9%. Overall, using multiple predictors appears to improve classification because democracy is associated with several socioeconomic factors rather than just one.
+
+However, there is a tradeoff between predictive performance and interpretability. The single-variable logistic regression model is easier to explain because it shows how the number of children per woman relates to the likelihood of a country being democratic. The all-variable logistic regression model is more complex, but it considers several factors simultaneously, providing a more comprehensive picture. Its training accuracy of 82.5% is higher than its cross-validation accuracy of 78.7%, suggesting some loss of performance on unseen data, although cross-validation provides a more realistic estimate of generalization. Since its cross-validation accuracy and AUC are higher, I would recommend the all-variable logistic regression model if the lab's priority is prediction, while retaining the single-variable model as a simpler option for explaining individual relationships.
 
 ## Your question
 
