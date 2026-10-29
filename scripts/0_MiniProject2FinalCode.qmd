@@ -405,14 +405,16 @@ Income group and children per woman are nearly tied as the strongest predictors,
 
 ## kNN classification
 
+Predictors are normalized so distances are fair, and k is tuned from 3 to 21 with 10 fold cross validation using the same seed as the logistic models. Training accuracy is a little optimistic for kNN because each country counts as its own neighbor.
+
 ### Single variable model
 
-Make a kNN model using your best predictor variable
+Make a kNN model using your best predictor variable. This model uses children per woman, the best predictor from the exploratory analysis.
 
 ```{r}
 #| label: recipe_creation
-knn_single_variable_recipe <- recipe(Democracy~income_level, data = combined) |>
-  step_dummy(all_nominal_predictors())
+knn_single_variable_recipe <- recipe(Democracy ~ children_per_woman, data = combined) |>
+  step_normalize(all_numeric_predictors())
 
 knn_all_variable_recipe <- recipe(Democracy~income_level+sanitation_access_pct+children_per_woman+co2_per_capita+people_in_poverty, data = combined) |>
   step_normalize(all_numeric_predictors())|>
@@ -424,54 +426,18 @@ knn_all_variable_recipe <- recipe(Democracy~income_level+sanitation_access_pct+c
 ```{r}
 #| label: model-tuning-k-single-variable
 set.seed(1776)
-val_split <- validation_split(combined, prop = 0.8)
-
-knn_spec <- nearest_neighbor(neighbors=tune(),  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_single<-workflow()|>
-  add_recipe(knn_single_variable_recipe)|>
-  add_model(knn_spec)
-
-knn_grid <- tibble(neighbors = seq(from=3, to=21, by=2)) 
-class_met=metric_set(accuracy)
-knn_cv <- tune_grid(
-  knn_wf_single,
-  resamples = val_split,
-  grid = knn_grid
-)
-cv_metrics_knn<-collect_metrics(knn_cv)
-cv_metrics_knn
-
-autoplot(knn_cv, metric = "accuracy")
-best_k <- select_best(knn_cv, metric = "accuracy")
-best_k
-```
-
-#### Model for best k
-
-```{r}
-#| label: best-single-variable-model
-knn_spec<-nearest_neighbor(neighbors=3,  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_single<-workflow()|>
-  add_recipe(knn_single_variable_recipe)|>
-  add_model(knn_spec)
-
-single_knn_model <- 
-  knn_wf_single |> 
-  fit(data = combined)
-```
-
-#### Model evaluation-accuracy, cv for overfitting
-
-```{r}
-#| label: single-variable-model-evaluation
-set.seed(1776)
 folds <- vfold_cv(combined, v = 10)
+
+knn_spec <- nearest_neighbor(neighbors = tune(), weight_func = "rectangular") |>
+  set_engine("kknn") |>
+  set_mode("classification")
+
+knn_wf_single <- workflow() |>
+  add_recipe(knn_single_variable_recipe) |>
+  add_model(knn_spec)
+
+knn_grid <- tibble(neighbors = seq(from = 3, to = 21, by = 2))
+class_met <- metric_set(accuracy)
 
 knn_cv_single <- tune_grid(
   knn_wf_single,
@@ -480,11 +446,53 @@ knn_cv_single <- tune_grid(
   metrics = class_met
 )
 
-best_k_single <- select_best(knn_cv_single, metric = "accuracy")
 collect_metrics(knn_cv_single)
+
+autoplot(knn_cv_single, metric = "accuracy")
+best_k_single <- select_best(knn_cv_single, metric = "accuracy")
+best_k_single
 ```
 
-There is not clear evidence of overfitting when comparing against the accuracy of the cross-validation model. The accuracy scores on both models are roughly the same, which leans towards the model not overfitting.
+#### Model for best k
+
+```{r}
+#| label: best-single-variable-model
+knn_spec_single_best <- nearest_neighbor(neighbors = best_k_single$neighbors, weight_func = "rectangular") |>
+  set_engine("kknn") |>
+  set_mode("classification")
+
+knn_wf_single_best <- workflow() |>
+  add_recipe(knn_single_variable_recipe) |>
+  add_model(knn_spec_single_best)
+
+single_knn_model <- knn_wf_single_best |>
+  fit(data = combined)
+```
+
+#### Model evaluation-accuracy, cv for overfitting
+
+```{r}
+#| label: single-variable-model-evaluation
+single_knn_pred <- predict(single_knn_model, new_data = combined, type = "class") |>
+  bind_cols(combined |> select(Democracy)) |>
+  mutate(Democracy = factor(Democracy, levels = c("No", "Yes")))
+
+single_knn_cv_best <- collect_metrics(knn_cv_single) |>
+  filter(neighbors == best_k_single$neighbors)
+
+knn_single_scores <- tibble(
+  model          = "Single variable",
+  k              = best_k_single$neighbors,
+  cv_accuracy    = single_knn_cv_best$mean,
+  cv_std_err     = single_knn_cv_best$std_err,
+  train_accuracy = accuracy(single_knn_pred, truth = Democracy, estimate = .pred_class)$.estimate
+)
+
+knitr::kable(knn_single_scores, digits = 3,
+             caption = "Single variable kNN model, cross validation and training")
+```
+
+The best k is 7. The model classifies 77.3% of countries correctly in cross validation, against 54.5% for always guessing No. Training accuracy is 81.8%, about 4.5 points higher, so the model fits the countries it has seen a little better than new ones. This is mild overfitting, and the cross validated number is the fair one.
 
 ### All variable model
 
@@ -495,54 +503,11 @@ Make a kNN model using all your predictor variables
 ```{r}
 #| label: model-tuning-k-all-variables
 set.seed(1776)
-val_split <- validation_split(combined, prop = 0.8)
-
-knn_spec <- nearest_neighbor(neighbors=tune(),  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_all<-workflow()|>
-  add_recipe(knn_all_variable_recipe)|>
-  add_model(knn_spec)
-
-knn_grid <- tibble(neighbors = seq(from=3, to=21, by=2)) 
-class_met=metric_set(accuracy)
-knn_cv <- tune_grid(
-  knn_wf_all,
-  resamples = val_split,
-  grid = knn_grid
-)
-cv_metrics_knn<-collect_metrics(knn_cv)
-cv_metrics_knn
-
-autoplot(knn_cv, metric = "accuracy")
-best_k <- select_best(knn_cv, metric = "accuracy")
-best_k
-```
-
-#### Model for best k
-
-```{r}
-#| label: best-all-variables-model
-knn_spec<-nearest_neighbor(neighbors=5,  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_all<-workflow()|>
-  add_recipe(knn_all_variable_recipe)|>
-  add_model(knn_spec)
-
-all_knn_model <- 
-  knn_wf_all |> 
-  fit(data = combined)
-```
-
-#### Model evaluation-accuracy, cv for overfitting
-
-```{r}
-#| label: all-variables-model-evaluation
-set.seed(1776)
 folds <- vfold_cv(combined, v = 10)
+
+knn_wf_all <- workflow() |>
+  add_recipe(knn_all_variable_recipe) |>
+  add_model(knn_spec)
 
 knn_cv_all <- tune_grid(
   knn_wf_all,
@@ -551,15 +516,63 @@ knn_cv_all <- tune_grid(
   metrics = class_met
 )
 
-best_k_all <- select_best(knn_cv_all, metric = "accuracy")
 collect_metrics(knn_cv_all)
+
+autoplot(knn_cv_all, metric = "accuracy")
+best_k_all <- select_best(knn_cv_all, metric = "accuracy")
+best_k_all
 ```
 
-There is no noticeable gap between the cross-validation model mean accuracy and the accuracy in the best model. The difference between the mean accuracy and accuracy of the best model seems to be roughly the same as the single variable model. I would say there is no overfitting present in this model.
+#### Model for best k
+
+```{r}
+#| label: best-all-variables-model
+knn_spec_all_best <- nearest_neighbor(neighbors = best_k_all$neighbors, weight_func = "rectangular") |>
+  set_engine("kknn") |>
+  set_mode("classification")
+
+knn_wf_all_best <- workflow() |>
+  add_recipe(knn_all_variable_recipe) |>
+  add_model(knn_spec_all_best)
+
+all_knn_model <- knn_wf_all_best |>
+  fit(data = combined)
+```
+
+#### Model evaluation-accuracy, cv for overfitting
+
+```{r}
+#| label: all-variables-model-evaluation
+all_knn_pred <- predict(all_knn_model, new_data = combined, type = "class") |>
+  bind_cols(combined |> select(Democracy)) |>
+  mutate(Democracy = factor(Democracy, levels = c("No", "Yes")))
+
+all_knn_cv_best <- collect_metrics(knn_cv_all) |>
+  filter(neighbors == best_k_all$neighbors)
+
+knn_all_scores <- tibble(
+  model          = "All variables",
+  k              = best_k_all$neighbors,
+  cv_accuracy    = all_knn_cv_best$mean,
+  cv_std_err     = all_knn_cv_best$std_err,
+  train_accuracy = accuracy(all_knn_pred, truth = Democracy, estimate = .pred_class)$.estimate
+)
+
+knitr::kable(knn_all_scores, digits = 3,
+             caption = "All variable kNN model, cross validation and training")
+```
+
+The best k is 13. The model classifies 79.9% of countries correctly in cross validation. Training accuracy is 83.8%, about 3.9 points higher, which is a similar mild overfit to the single variable model.
 
 ### Which model was best?
 
-Of the two kNN models, the best performing one was the multivariate model. It had the higher accuracy when finding the best k as well as during cross-validation. I would say the trade off of complexity was not worth it as we only gained a small increase to accuracy at the cost of adding four addition variables. This will make the model harder to interpret.
+```{r}
+#| label: knn-compare
+bind_rows(knn_single_scores, knn_all_scores) |>
+  knitr::kable(digits = 3, caption = "kNN models compared")
+```
+
+The all variable model has the higher cross validated accuracy, 79.9% against 77.3%. The gap of 2.6 points is smaller than the standard error of about 3.5 to 4 points, so it is not a clear win. It also needs five predictors instead of one and is harder to explain. The extra complexity is not worth it, and the single variable model is the better choice.
 
 ## Logistic Regression
 
