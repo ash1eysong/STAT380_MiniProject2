@@ -5,14 +5,6 @@ format: pdf
 editor: visual
 ---
 
-> **Source disclosure**
->
-> Reference sources for the techniques used:
->
-> - Visualization: ggplot2 reference for `geom_jitter`, <https://ggplot2.tidyverse.org/reference/geom_jitter.html>
-> - Cleaning: R for Data Science, data tidying chapter, <https://r4ds.hadley.nz/data-tidy.html>
-> - Other: R for Data Science, exploratory data analysis chapter, <https://r4ds.hadley.nz/eda.html>
-
 ## Libraries and data load
 
 Libraries for data work and plotting, and for the models that follow.
@@ -30,6 +22,7 @@ library(workflows)
 library(tune)
 library(dials)
 library(yardstick)
+library(broom)
 ```
 
 The response is `Democracy`, whether a country was a democracy in 2020. Every predictor is taken for 2020, the year of the democracy data.
@@ -155,7 +148,7 @@ combined |>
 #| label: co2-graph
 #| fig-height: 3
 #| fig-width: 6
-ggplot(combined, aes(x = Democracy, y = co2_per_capita)) +
+ggplot(data = combined, mapping = aes(x = Democracy, y = co2_per_capita)) +
   geom_jitter(width = 0.15, height = 0, alpha = 0.6, color = "blue", size = 2) +
   stat_summary(fun = median, geom = "crossbar", width = 0.5,
                color = "black", linewidth = 0.4) +
@@ -173,7 +166,7 @@ Democratic countries emit more CO2 per person. Most non-democratic countries sit
 #| label: co2-stats
 combined |>
   group_by(Democracy) |>
-  summarise(
+  summarize(
     n_countries = n(),
     mean        = mean(co2_per_capita),
     median      = median(co2_per_capita),
@@ -240,14 +233,14 @@ income_data <- combined |>
 #| label: income-graph
 #| fig-height: 3
 #| fig-width: 6
-ggplot(income_data, aes(x = income_level, fill = Democracy)) +
+ggplot(data = income_data, mapping = aes(x = income_level, fill = Democracy)) +
   geom_bar(position = "fill") +
   scale_fill_manual(values = c(No = "orange", Yes = "blue")) +
-  scale_x_discrete(labels = scales::label_wrap(12)) +
   scale_y_continuous(labels = scales::percent) +
   labs(title = "Democracy by World Bank Income Group, 2020",
        x = "Income group", y = "Share of countries", fill = "Democracy") +
-  theme_minimal()
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
 ```
 
 The share of democracies rises steadily with income. No low income country is a democracy, about a quarter of lower middle income countries are, about half of upper middle income countries are, and nearly all high income countries are.
@@ -276,7 +269,7 @@ The four high income non-democracies are Bahrain, Kuwait, Oman and Saudi Arabia,
 #| label: income-co2
 income_data |>
   group_by(income_level) |>
-  summarise(n_countries = n(), median_co2 = median(co2_per_capita),
+  summarize(n_countries = n(), median_co2 = median(co2_per_capita),
             mean_co2 = mean(co2_per_capita)) |>
   knitr::kable(digits = 2, caption = "CO2 per capita by income group")
 ```
@@ -412,14 +405,16 @@ Income group and children per woman are nearly tied as the strongest predictors,
 
 ## kNN classification
 
+Predictors are normalized so distances are fair, and k is tuned from 3 to 21 with 10 fold cross validation using the same seed as the logistic models. Training accuracy is a little optimistic for kNN because each country counts as its own neighbor.
+
 ### Single variable model
 
-Make a kNN model using your best predictor variable
+Make a kNN model using your best predictor variable. This model uses children per woman, the best predictor from the exploratory analysis.
 
 ```{r}
 #| label: recipe_creation
-knn_single_variable_recipe <- recipe(Democracy~income_level, data = combined) |>
-  step_dummy(all_nominal_predictors())
+knn_single_variable_recipe <- recipe(Democracy ~ children_per_woman, data = combined) |>
+  step_normalize(all_numeric_predictors())
 
 knn_all_variable_recipe <- recipe(Democracy~income_level+sanitation_access_pct+children_per_woman+co2_per_capita+people_in_poverty, data = combined) |>
   step_normalize(all_numeric_predictors())|>
@@ -431,54 +426,18 @@ knn_all_variable_recipe <- recipe(Democracy~income_level+sanitation_access_pct+c
 ```{r}
 #| label: model-tuning-k-single-variable
 set.seed(1776)
-val_split <- validation_split(combined, prop = 0.8)
-
-knn_spec <- nearest_neighbor(neighbors=tune(),  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_single<-workflow()|>
-  add_recipe(knn_single_variable_recipe)|>
-  add_model(knn_spec)
-
-knn_grid <- tibble(neighbors = seq(from=3, to=21, by=2)) 
-class_met=metric_set(accuracy)
-knn_cv <- tune_grid(
-  knn_wf_single,
-  resamples = val_split,
-  grid = knn_grid
-)
-cv_metrics_knn<-collect_metrics(knn_cv)
-cv_metrics_knn
-
-autoplot(knn_cv, metric = "accuracy")
-best_k <- select_best(knn_cv, metric = "accuracy")
-best_k
-```
-
-#### Model for best k
-
-```{r}
-#| label: best-single-variable-model
-knn_spec<-nearest_neighbor(neighbors=3,  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_single<-workflow()|>
-  add_recipe(knn_single_variable_recipe)|>
-  add_model(knn_spec)
-
-single_knn_model <- 
-  knn_wf_single |> 
-  fit(data = combined)
-```
-
-#### Model evaluation-accuracy, cv for overfitting
-
-```{r}
-#| label: single-variable-model-evaluation
-set.seed(1776)
 folds <- vfold_cv(combined, v = 10)
+
+knn_spec <- nearest_neighbor(neighbors = tune(), weight_func = "rectangular") |>
+  set_engine("kknn") |>
+  set_mode("classification")
+
+knn_wf_single <- workflow() |>
+  add_recipe(knn_single_variable_recipe) |>
+  add_model(knn_spec)
+
+knn_grid <- tibble(neighbors = seq(from = 3, to = 21, by = 2))
+class_met <- metric_set(accuracy)
 
 knn_cv_single <- tune_grid(
   knn_wf_single,
@@ -487,11 +446,53 @@ knn_cv_single <- tune_grid(
   metrics = class_met
 )
 
-best_k_single <- select_best(knn_cv_single, metric = "accuracy")
 collect_metrics(knn_cv_single)
+
+autoplot(knn_cv_single, metric = "accuracy")
+best_k_single <- select_best(knn_cv_single, metric = "accuracy")
+best_k_single
 ```
 
-There is not clear evidence of overfitting when comparing against the accuracy of the cross-validation model. The accuracy scores on both models are roughly the same, which leans towards the model not overfitting.
+#### Model for best k
+
+```{r}
+#| label: best-single-variable-model
+knn_spec_single_best <- nearest_neighbor(neighbors = best_k_single$neighbors, weight_func = "rectangular") |>
+  set_engine("kknn") |>
+  set_mode("classification")
+
+knn_wf_single_best <- workflow() |>
+  add_recipe(knn_single_variable_recipe) |>
+  add_model(knn_spec_single_best)
+
+single_knn_model <- knn_wf_single_best |>
+  fit(data = combined)
+```
+
+#### Model evaluation-accuracy, cv for overfitting
+
+```{r}
+#| label: single-variable-model-evaluation
+single_knn_pred <- predict(single_knn_model, new_data = combined, type = "class") |>
+  bind_cols(combined |> select(Democracy)) |>
+  mutate(Democracy = factor(Democracy, levels = c("No", "Yes")))
+
+single_knn_cv_best <- collect_metrics(knn_cv_single) |>
+  filter(neighbors == best_k_single$neighbors)
+
+knn_single_scores <- tibble(
+  model          = "Single variable",
+  k              = best_k_single$neighbors,
+  cv_accuracy    = single_knn_cv_best$mean,
+  cv_std_err     = single_knn_cv_best$std_err,
+  train_accuracy = accuracy(single_knn_pred, truth = Democracy, estimate = .pred_class)$.estimate
+)
+
+knitr::kable(knn_single_scores, digits = 3,
+             caption = "Single variable kNN model, cross validation and training")
+```
+
+The best k is 7. The model classifies 77.3% of countries correctly in cross validation, against 54.5% for always guessing No. Training accuracy is 81.8%, about 4.5 points higher, so the model fits the countries it has seen a little better than new ones. This is mild overfitting, and the cross validated number is the fair one.
 
 ### All variable model
 
@@ -502,54 +503,11 @@ Make a kNN model using all your predictor variables
 ```{r}
 #| label: model-tuning-k-all-variables
 set.seed(1776)
-val_split <- validation_split(combined, prop = 0.8)
-
-knn_spec <- nearest_neighbor(neighbors=tune(),  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_all<-workflow()|>
-  add_recipe(knn_all_variable_recipe)|>
-  add_model(knn_spec)
-
-knn_grid <- tibble(neighbors = seq(from=3, to=21, by=2)) 
-class_met=metric_set(accuracy)
-knn_cv <- tune_grid(
-  knn_wf_all,
-  resamples = val_split,
-  grid = knn_grid
-)
-cv_metrics_knn<-collect_metrics(knn_cv)
-cv_metrics_knn
-
-autoplot(knn_cv, metric = "accuracy")
-best_k <- select_best(knn_cv, metric = "accuracy")
-best_k
-```
-
-#### Model for best k
-
-```{r}
-#| label: best-all-variables-model
-knn_spec<-nearest_neighbor(neighbors=5,  weight_func = "rectangular") |>
-  set_engine("kknn")|>
-  set_mode("classification")
-
-knn_wf_all<-workflow()|>
-  add_recipe(knn_all_variable_recipe)|>
-  add_model(knn_spec)
-
-all_knn_model <- 
-  knn_wf_all |> 
-  fit(data = combined)
-```
-
-#### Model evaluation-accuracy, cv for overfitting
-
-```{r}
-#| label: all-variables-model-evaluation
-set.seed(1776)
 folds <- vfold_cv(combined, v = 10)
+
+knn_wf_all <- workflow() |>
+  add_recipe(knn_all_variable_recipe) |>
+  add_model(knn_spec)
 
 knn_cv_all <- tune_grid(
   knn_wf_all,
@@ -558,37 +516,299 @@ knn_cv_all <- tune_grid(
   metrics = class_met
 )
 
-best_k_all <- select_best(knn_cv_all, metric = "accuracy")
 collect_metrics(knn_cv_all)
+
+autoplot(knn_cv_all, metric = "accuracy")
+best_k_all <- select_best(knn_cv_all, metric = "accuracy")
+best_k_all
 ```
 
-There is no noticeable gap between the cross-validation model mean accuracy and the accuracy in the best model. The difference between the mean accuracy and accuracy of the best model seems to be roughly the same as the single variable model. I would say there is no overfitting present in this model.
+#### Model for best k
+
+```{r}
+#| label: best-all-variables-model
+knn_spec_all_best <- nearest_neighbor(neighbors = best_k_all$neighbors, weight_func = "rectangular") |>
+  set_engine("kknn") |>
+  set_mode("classification")
+
+knn_wf_all_best <- workflow() |>
+  add_recipe(knn_all_variable_recipe) |>
+  add_model(knn_spec_all_best)
+
+all_knn_model <- knn_wf_all_best |>
+  fit(data = combined)
+```
+
+#### Model evaluation-accuracy, cv for overfitting
+
+```{r}
+#| label: all-variables-model-evaluation
+all_knn_pred <- predict(all_knn_model, new_data = combined, type = "class") |>
+  bind_cols(combined |> select(Democracy)) |>
+  mutate(Democracy = factor(Democracy, levels = c("No", "Yes")))
+
+all_knn_cv_best <- collect_metrics(knn_cv_all) |>
+  filter(neighbors == best_k_all$neighbors)
+
+knn_all_scores <- tibble(
+  model          = "All variables",
+  k              = best_k_all$neighbors,
+  cv_accuracy    = all_knn_cv_best$mean,
+  cv_std_err     = all_knn_cv_best$std_err,
+  train_accuracy = accuracy(all_knn_pred, truth = Democracy, estimate = .pred_class)$.estimate
+)
+
+knitr::kable(knn_all_scores, digits = 3,
+             caption = "All variable kNN model, cross validation and training")
+```
+
+The best k is 13. The model classifies 79.9% of countries correctly in cross validation. Training accuracy is 83.8%, about 3.9 points higher, which is a similar mild overfit to the single variable model.
 
 ### Which model was best?
 
-Of the two kNN models, the best performing one was the multivariate model. It had the higher accuracy when finding the best k as well as during cross-validation. I would say the trade off of complexity was not worth it as we only gained a small increase to accuracy at the cost of adding four addition variables. This will make the model harder to interpret.
+```{r}
+#| label: knn-compare
+bind_rows(knn_single_scores, knn_all_scores) |>
+  knitr::kable(digits = 3, caption = "kNN models compared")
+```
+
+The all variable model has the higher cross validated accuracy, 79.9% against 77.3%. The gap of 2.6 points is smaller than the standard error of about 3.5 to 4 points, so it is not a clear win. It also needs five predictors instead of one and is harder to explain. The extra complexity is not worth it, and the single variable model is the better choice.
 
 ## Logistic Regression
 
+The response `Democracy` becomes a factor with No first, so each model predicts the probability of Yes. Every model uses the same seed and 10 folds as the kNN models.
+
+```{r}
+#| label: logit-data
+logit_data <- combined |>
+  mutate(
+    Democracy = factor(Democracy, levels = c("No", "Yes")),
+    income_score = as.numeric(match(
+      income_level,
+      c("Low income", "Lower middle income", "Upper middle income", "High income")
+    )),
+    log_people_in_poverty = log(people_in_poverty)
+  )
+
+log_spec <- logistic_reg() |>
+  set_engine("glm") |>
+  set_mode("classification")
+
+set.seed(1776)
+logit_folds <- vfold_cv(logit_data, v = 10)
+
+cv_mean <- function(cv, metric) {
+  collect_metrics(cv) |>
+    filter(.metric == metric) |>
+    pull(mean)
+}
+```
+
 ### Single variable model
 
-Make a logistic regression model using your best predictor variable \#### Model
+Make a logistic regression model using your best predictor variable. This model uses children per woman, the best predictor from the exploratory analysis.
+
+#### Model
+
+```{r}
+#| label: logit-single-model
+logit_single_wf <- workflow() |>
+  add_formula(Democracy ~ children_per_woman) |>
+  add_model(log_spec)
+
+logit_single_fit <- logit_single_wf |>
+  fit(data = logit_data)
+
+tidy(logit_single_fit) |>
+  mutate(odds_ratio = exp(estimate),
+         p_value = format.pval(p.value, digits = 2, eps = 1e-4)) |>
+  select(term, estimate, std.error, odds_ratio, p_value) |>
+  knitr::kable(digits = 3, caption = "Single variable logistic model")
+```
+
+Each extra child per woman multiplies the odds of being a democracy by $e^{-1.66} \approx 0.19$, a drop of about 81%, and the slope is highly significant with a p-value far below 0.001.
 
 #### Equation and Graph of model
 
+$$\log\left(\frac{p}{1-p}\right) = 3.72 - 1.66 \times \text{children per woman}$$
+
+Here p is the probability that a country is a democracy.
+
+```{r}
+#| label: logit-single-graph
+#| fig-height: 3
+#| fig-width: 6
+curve_data <- tibble(
+  children_per_woman = seq(min(logit_data$children_per_woman),
+                           max(logit_data$children_per_woman), length.out = 100)
+)
+curve_data <- bind_cols(curve_data,
+                        predict(logit_single_fit, curve_data, type = "prob"))
+
+ggplot() +
+  geom_jitter(data = logit_data,
+              aes(children_per_woman, as.numeric(Democracy == "Yes")),
+              height = 0.03, alpha = 0.5, color = "orange") +
+  geom_line(data = curve_data, aes(children_per_woman, .pred_Yes), color = "blue") +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = scales::percent) +
+  labs(title = "Probability of Democracy by Children per Woman, 2020",
+       x = "Children per woman", y = "Probability of democracy",
+       caption = "The blue line is the model. Each orange dot is a country, with 0% for No and 100% for Yes.") +
+  theme_minimal()
+```
+
+The curve falls steadily as families get larger. The model gives a country with 1.5 children per woman about a 77% chance of being a democracy and one with 3 children about a 22% chance. The dots show that countries with few children per woman are mostly democracies and countries with many are mostly not.
+
 #### Model evaluation-p-values, accuracy, cv for overfitting, roc, auc
+
+```{r}
+#| label: logit-single-eval
+#| fig-height: 3
+#| fig-width: 6
+logit_single_cv <- fit_resamples(
+  logit_single_wf,
+  resamples = logit_folds,
+  metrics = metric_set(accuracy, roc_auc),
+  control = control_resamples(save_pred = TRUE)
+)
+
+single_pred_class <- predict(logit_single_fit, new_data = logit_data, type = "class")
+single_pred_prob  <- predict(logit_single_fit, new_data = logit_data, type = "prob")
+
+single_train <- logit_data |>
+  select(Democracy) |>
+  bind_cols(single_pred_class, single_pred_prob)
+
+logit_single_scores <- tibble(
+  model          = "Single variable",
+  cv_accuracy    = cv_mean(logit_single_cv, "accuracy"),
+  cv_auc         = cv_mean(logit_single_cv, "roc_auc"),
+  train_accuracy = accuracy(single_train, truth = Democracy, estimate = .pred_class)$.estimate,
+  train_auc      = roc_auc(single_train, truth = Democracy, .pred_Yes,
+                           event_level = "second")$.estimate
+)
+
+knitr::kable(logit_single_scores, digits = 3,
+             caption = "Single variable logistic model, cross validation and training")
+
+collect_predictions(logit_single_cv) |>
+  roc_curve(truth = Democracy, .pred_Yes, event_level = "second") |>
+  autoplot() +
+  labs(title = "ROC Curve, Single Variable Logistic Model",
+       caption = "Predictions from 10 fold cross validation.")
+```
+
+The p-value for children per woman is far below 0.001, so it is a clearly useful predictor. The model classifies 77.2% of countries correctly in cross validation, against 54.5% for always guessing No, and the cross validated AUC is 0.857. Training accuracy of 77.3% and AUC of 0.855 are almost the same, so there is no sign of overfitting.
 
 ### All variable model
 
-Make a logistic regression model using all your predictor variables \#### Model
+Make a logistic regression model using all your predictor variables
+
+#### Model
+
+Income group is scored 1 to 4 from Low to High income in this model, and people in poverty is logged because its counts are extremely skewed. Income group is scored as a number because separate categories break the model. No low income country is a democracy, so the Low income estimate runs off to about -21 with a standard error above 1,300.
+
+```{r}
+#| label: logit-income-coding
+suppressWarnings(glm(Democracy ~ income_level, data = logit_data, family = binomial)) |>
+  tidy() |>
+  knitr::kable(digits = 3, caption = "Income group entered as separate categories")
+```
+
+```{r}
+#| label: logit-all-model
+logit_all_wf <- workflow() |>
+  add_formula(Democracy ~ income_score + sanitation_access_pct + children_per_woman +
+                co2_per_capita + log_people_in_poverty) |>
+  add_model(log_spec)
+
+logit_all_fit <- logit_all_wf |>
+  fit(data = logit_data)
+
+tidy(logit_all_fit) |>
+  mutate(odds_ratio = exp(estimate),
+         p_value = format.pval(p.value, digits = 2, eps = 1e-4)) |>
+  select(term, estimate, std.error, odds_ratio, p_value) |>
+  knitr::kable(digits = 3, caption = "All variable logistic model")
+```
+
+```{r}
+#| label: logit-all-vif
+predictor_names <- c("income_score", "sanitation_access_pct", "children_per_woman",
+                     "co2_per_capita", "log_people_in_poverty")
+
+tibble(
+  predictor = predictor_names,
+  vif = map_dbl(predictor_names, \(v) {
+    r2 <- summary(lm(reformulate(setdiff(predictor_names, v), v),
+                     data = logit_data))$r.squared
+    1 / (1 - r2)
+  })
+) |>
+  knitr::kable(digits = 2, caption = "Variance inflation factors")
+```
+
+Holding the other predictors fixed, each step up in income group multiplies the odds of democracy by about 12 and each extra child per woman multiplies them by about 0.15. Each extra percentage point of sanitation access multiplies them by about 0.95. CO2 per capita and logged poverty are not significant, with p-values of 0.12 and 0.15, so they add little. Sanitation has a negative sign even though democracies have higher sanitation on their own. It overlaps with income group and children per woman, with variance inflation factors near 4, so its slope should not be read alone.
 
 #### Equation of model
 
+$$
+\begin{aligned}
+\log\left(\frac{p}{1-p}\right) &= 0.07 + 2.46 \times \text{income score} - 0.052 \times \text{sanitation} \\
+&\quad - 1.87 \times \text{children per woman} - 0.111 \times \text{CO2} + 0.162 \times \log(\text{poverty})
+\end{aligned}
+$$
+
 #### Model evaluation-p-values, accuracy, cv for overfitting, roc, auc
+
+```{r}
+#| label: logit-all-eval
+#| fig-height: 3
+#| fig-width: 6
+logit_all_cv <- fit_resamples(
+  logit_all_wf,
+  resamples = logit_folds,
+  metrics = metric_set(accuracy, roc_auc),
+  control = control_resamples(save_pred = TRUE)
+)
+
+all_pred_class <- predict(logit_all_fit, new_data = logit_data, type = "class")
+all_pred_prob  <- predict(logit_all_fit, new_data = logit_data, type = "prob")
+
+all_train <- logit_data |>
+  select(Democracy) |>
+  bind_cols(all_pred_class, all_pred_prob)
+
+logit_all_scores <- tibble(
+  model          = "All variables",
+  cv_accuracy    = cv_mean(logit_all_cv, "accuracy"),
+  cv_auc         = cv_mean(logit_all_cv, "roc_auc"),
+  train_accuracy = accuracy(all_train, truth = Democracy, estimate = .pred_class)$.estimate,
+  train_auc      = roc_auc(all_train, truth = Democracy, .pred_Yes,
+                           event_level = "second")$.estimate
+)
+
+knitr::kable(logit_all_scores, digits = 3,
+             caption = "All variable logistic model, cross validation and training")
+
+collect_predictions(logit_all_cv) |>
+  roc_curve(truth = Democracy, .pred_Yes, event_level = "second") |>
+  autoplot() +
+  labs(title = "ROC Curve, All Variable Logistic Model",
+       caption = "Predictions from 10 fold cross validation.")
+```
+
+Income group, children per woman and sanitation are significant, so they belong in the model, while CO2 and poverty could be dropped. The model classifies 78.7% of countries correctly in cross validation with an AUC of 0.899. Training accuracy is 82.5% and training AUC is 0.918, so the model fits the training data a little better than new data. This is mild overfitting, and the cross validated numbers are the fair ones.
 
 ### Which model was best?
 
-Of your two logistic regression models which performed the best? Why? If it was the multivariate model was it worth the trade off of complexity? Why?
+```{r}
+#| label: logit-compare
+bind_rows(logit_single_scores, logit_all_scores) |>
+  knitr::kable(digits = 3, caption = "Logistic models compared")
+```
+
+The all variable model ranks countries better, with a cross validated AUC of 0.899 against 0.857. Its accuracy is only 1.5 points higher at 78.7% against 77.2%, which is within the standard error of about 3 points. It also overfits a little more, with a gap of 3.8 points between training and cross validated accuracy against about 0.1 points for the single variable model, and two of its five predictors are not significant. The extra complexity is only partly worth it. It helps rank countries by how likely they are to be democracies, but it adds little for a simple yes or no call, so the single variable model is the simpler choice and a model with only income, children per woman and sanitation would be worth trying.
 
 ## Best model
 
@@ -603,6 +823,7 @@ Is access to basic sanitation associated with the average number of children per
 Access to basic sanitation is an important indicator of living conditions and public health. We wanted to investigate whether countries with greater access to basic sanitation tend to have lower fertility rates. Comparing these two variables may help us understand how different aspects of development are associated across countries.
 
 ```{r}
+#| label: question-graph
 combined |>
   ggplot(aes(x = sanitation_access_pct, y = children_per_woman)) +
   geom_point() +
@@ -617,6 +838,7 @@ combined |>
 ```
 
 ```{r}
+#| label: question-correlation
 combined |>
   summarise(
     correlation = cor(sanitation_access_pct, children_per_woman)
